@@ -89,8 +89,15 @@ export default function (options, req) {
 // Add security values, to operations - that declare their need on them
 // Adapted from the Swagger2 implementation
 export function applySecurities({request, securities = {}, operation = {}, spec}) {
+
   const result = assign({}, request)
   const {authorized = {}} = securities
+  // this means we loop through the securities as defined in the spec.
+  // operation security is the security defined to that path operation
+  // or spec.security is the global security.
+
+  // we then check our authorizations AGAINST those specified securities
+  // and if those authorizations match the security (name match) then we build out the header/query/etc
   const security = operation.security || spec.security || []
   const isAuthorized = authorized && !!Object.keys(authorized).length
   const securityDef = get(spec, ['components', 'securitySchemes']) || {}
@@ -102,7 +109,6 @@ export function applySecurities({request, securities = {}, operation = {}, spec}
       (Array.isArray(operation.security) && !operation.security.length)) {
     return request
   }
-
   security.forEach((securityObj, index) => {
     for (const key in securityObj) {
       const auth = authorized[key]
@@ -117,14 +123,17 @@ export function applySecurities({request, securities = {}, operation = {}, spec}
 
       if (auth) {
         if (type === 'apiKey') {
-          if (schema.in === 'query') {
-            result.query[schema.name] = value
+          let name = auth.name || schema.name;
+          let inType = auth.in || schema.in;
+
+          if (inType === 'query') {
+            result.query[name] = value
           }
-          if (schema.in === 'header') {
-            result.headers[schema.name] = value
+          if ((inType === 'header') || (inType === 'headers')) {
+            result.headers[name] = value
           }
-          if (schema.in === 'cookie') {
-            result.cookies[schema.name] = value
+          if ((inType === 'cookie') || (inType === 'cookies')) {
+            result.cookies[name] = value
           }
         }
         else if (type === 'http') {

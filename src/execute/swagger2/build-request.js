@@ -42,6 +42,12 @@ export default function (options, req) {
 export function applySecurities({request, securities = {}, operation = {}, spec}) {
   const result = assign({}, request)
   const {authorized = {}, specSecurity = []} = securities
+  // this means we loop through the securities as defined in the spec.
+  // operation security is the security defined to that path operation
+  // or spec.security is the global security.
+
+  // we then check our authorizations AGAINST those specified securities
+  // and if those authorizations match the security (name match) then we build out the header/query/etc
   const security = operation.security || specSecurity
   const isAuthorized = authorized && !!Object.keys(authorized).length
   const securityDef = spec.securityDefinitions
@@ -57,6 +63,7 @@ export function applySecurities({request, securities = {}, operation = {}, spec}
   security.forEach((securityObj, index) => {
     for (const key in securityObj) {
       const auth = authorized[key]
+
       if (!auth) {
         continue
       }
@@ -70,9 +77,13 @@ export function applySecurities({request, securities = {}, operation = {}, spec}
 
       if (auth) {
         if (type === 'apiKey') {
-          const inType = schema.in === 'query' ? 'query' : 'headers'
+          let inType = auth.in || schema.in;
+          if (inType !== 'query') {
+            inType = 'headers';
+          }
           result[inType] = result[inType] || {}
-          result[inType][schema.name] = value
+          let name = auth.name || schema.name;
+          result[inType][name] = value;
         }
         else if (type === 'basic') {
           if (value.header) {

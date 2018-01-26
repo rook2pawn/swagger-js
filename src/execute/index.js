@@ -1,5 +1,6 @@
 import assign from 'lodash/assign'
 import getIn from 'lodash/get'
+import isUndefined from 'lodash/isUndefined'
 import isPlainObject from 'lodash/isPlainObject'
 import isArray from 'lodash/isArray'
 import btoa from 'btoa'
@@ -12,12 +13,18 @@ import SWAGGER2_PARAMETER_BUILDERS from './swagger2/parameter-builders'
 import OAS3_PARAMETER_BUILDERS from './oas3/parameter-builders'
 import oas3BuildRequest from './oas3/build-request'
 import swagger2BuildRequest from './swagger2/build-request'
+const inspect = require('util').inspect;
 import {
   getOperationRaw,
   idFromPathMethod,
   legacyIdFromPathMethod,
   isOAS3
 } from '../helpers'
+
+// walmart optional extensions parameters
+// the first (+ or /) indicates + replace as is
+// whereas / indicates URIEncode and / prepend
+const walmartExtensionParamsRegEx = /^([+\/])(.+?)$/;
 
 const arrayOrEmpty = (ar) => {
   return Array.isArray(ar) ? ar : []
@@ -69,6 +76,10 @@ export function execute({
   securities,
   ...extras
 }) {
+
+  // the extras are for example
+  //  { agent: [Function], requestInterceptor: [Function] }
+
   // Provide default fetch implementation
   const http = userHttp || fetch || stockHttp // Default to _our_ http
 
@@ -179,38 +190,49 @@ export function buildRequest(options) {
   // REVIEW: OAS3: have any key names or parameter shapes changed?
   // Any new features that need to be plugged in here?
 
-
   // Add values to request
   combinedParameters.forEach((parameter) => {
     const builder = parameterBuilders[parameter.in]
-    let value
+    let value;
+    const result = parameter.name.match(walmartExtensionParamsRegEx);
+    if (result !== null) {
+      // we detect if the parameter name matches walmart extension type i.e. "/foo" or "+foo"
+      // and we leave it as is in the URL
+      // by returning here we skip modification for that parameter
+      return;
+    } else {
 
-    if (parameter.in === 'body' && parameter.schema && parameter.schema.properties) {
-      value = parameters
-    }
+      if (parameter.in === 'body' && parameter.schema && parameter.schema.properties) {
+        value = parameters
+      }
 
-    value = parameter && parameter.name && parameters[parameter.name]
+      value = parameter && parameter.name && parameters[parameter.name]
 
-    if (typeof value === 'undefined') {
-        // check for `name-in` formatted key
-      value = parameter && parameter.name && parameters[`${parameter.in}.${parameter.name}`]
-    }
-    else if (findParametersWithName(parameter.name, combinedParameters).length > 1) {
-      // value came from `parameters[parameter.name]`
-      // check to see if this is an ambiguous parameter
-      // eslint-disable-next-line no-console
-      console.warn(`Parameter '${parameter.name}' is ambiguous because the defined spec has more than one parameter with the name: '${parameter.name}' and the passed-in parameter values did not define an 'in' value.`)
-    }
+      if (typeof value === 'undefined') {
+          // check for `name-in` formatted key
+        value = parameter && parameter.name && parameters[`${parameter.in}.${parameter.name}`]
+      }
+      else if (findParametersWithName(parameter.name, combinedParameters).length > 1) {
+        // value came from `parameters[name]`
+        // check to see if this is an ambiguous parameter
+        // eslint-disable-next-line no-console
+        console.warn(`Parameter '${parameter.name}' is ambiguous because the defined spec has more than one parameter with the name: '${parameter.name}' and the passed-in parameter values did not define an 'in' value.`)
+      }
 
-    if (typeof parameter.default !== 'undefined' && typeof value === 'undefined') {
-      value = parameter.default
-    }
+      if (typeof parameter.default !== 'undefined' && typeof value === 'undefined') {
+        value = parameter.default
+      }
 
-    if (typeof value === 'undefined' && parameter.required && !parameter.allowEmptyValue) {
-      throw new Error(`Required parameter ${parameter.name} is not provided`)
+      if (typeof value === 'undefined' && parameter.required && !parameter.allowEmptyValue) {
+        throw new Error(`Required parameter ${parameter.name} is not provided`)
+      }
+
     }
 
     if (builder) {
+
+      // builder is different from v2 and v3
+      // v2 will encodeUriComponent
       builder({req, parameter, value, operation, spec})
     }
   })

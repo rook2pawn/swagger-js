@@ -2,6 +2,52 @@ import 'cross-fetch/polyfill'
 import qs from 'qs'
 import jsYaml from 'js-yaml'
 import isString from 'lodash/isString'
+import get from 'lodash/get'
+
+const makeResponseTimeoutError = function(ms) {
+//  https://github.com/visionmedia/superagent/blob/master/lib/request-base.js#L666
+  let err = new Error(`Response timeout of ${ms}ms exceeded`)
+  err.code = 'ECONNABORTED';
+  err.errno = 'ETIMEDOUT'
+  return err;
+}
+const makeDeadlineTimeoutError = function(ms) {
+  let err = new Error(`Timeout of ${ms}ms exceeded`);
+  err.code = 'ECONNABORTED';
+  err.errno =  'ETIME';
+  return err;
+}
+
+
+function responseTimeout(ms, promise) {
+  return new Promise(function(resolve, reject) {
+    let timerId;
+    if (ms !== undefined) {
+      timerId = setTimeout(function() {
+        reject(makeResponseTimeoutError(ms))
+      }, ms);
+    }
+    promise.then((val) => {
+      clearTimeout(timerId);
+      resolve(val);
+    }, reject);
+  });
+};
+
+function deadlineTimeout(ms, promise, originalMs) {
+  return new Promise(function(resolve, reject) {
+    let timerId;
+    if (ms !== undefined) {
+      timerId = setTimeout(function() {
+        reject(makeDeadlineTimeoutError(originalMs))
+      }, ms);
+    }
+    promise.then((val) => {
+      clearTimeout(timerId);
+      resolve(val);
+    }, reject);
+  });
+};
 
 // For testing
 export const self = {
@@ -37,13 +83,46 @@ export default function http(url, request = {}) {
   }
 
   // eslint-disable-next-line no-undef
-  return (request.userFetch || fetch)(request.url, request).then((res) => {
-    const serialized = self.serializeRes(res, url, request).then((_res) => {
+//  return (request.userFetch || fetch)(request.url, request).then((res) => {
+
+  // What we need to see is when the promise resolves. is it on completion or on
+  // first byte?
+
+  // it is on first byte in independent testing
+  // the response.body is actually the node stream that can be captured/drained.
+
+  if (this.agent) {
+    request.agent = this.agent;
+  }
+
+  // this should be set from within
+  request.redirect = "error"; // https://github.com/bitinn/node-fetch#options
+
+  const reqpromise = (request.userFetch || fetch)(request.url, request);
+
+  const timeoutResponse = get(this, 'timeout.response', undefined);
+  let timeoutDeadline = get(this, 'timeout.deadline', undefined);
+
+  const time_start = Date.now();
+  return responseTimeout(timeoutResponse, reqpromise)
+  .then((res) => {
+    const time_ttfb = Date.now();
+    const time_elapsed = ~~(time_ttfb - time_start);
+    let modifiedTimeoutDeadline;
+    if (timeoutDeadline !== undefined) {
+      modifiedTimeoutDeadline = timeoutDeadline - time_elapsed;
+    }
+
+    // serializeRes drains the request
+    const serializePromise = self.serializeRes(res, url, request)
+    .then((_res) => {
       if (request.responseInterceptor) {
         _res = request.responseInterceptor(_res) || _res
       }
       return _res
-    })
+    });
+
+    const serialized = deadlineTimeout(modifiedTimeoutDeadline, serializePromise, timeoutDeadline);
 
     if (!res.ok) {
       const error = new Error(res.statusText)
@@ -76,6 +155,18 @@ function parseBody(body, contentType) {
 
 // Serialize the response, returns a promise with headers and the body part of the hash
 export function serializeRes(oriRes, url, {loadSpec = false} = {}) {
+/*
+{ ok: true,
+  url: 'https://oneops.prod.walmart.com/account/profile',
+  status: 200,
+  statusText: 'OK',
+  headers:
+   { date: 'Wed, 31 Jan 2018 11:30:38 GMT',
+     connection: 'close',
+     'content-length': '4' },
+  text: <Buffer 62 65 65 70>,
+  data: <Buffer 62 65 65 70> }
+  */
   const res = {
     ok: oriRes.ok,
     url: oriRes.url || url,
