@@ -61,7 +61,7 @@ Swagger.prototype = {
 
     return Swagger.execute({
       spec: this.spec,
-      http: this.http,
+      http: this.http.bind(this),
       securities: {authorized: this.authorizations},
       ...argHash
     })
@@ -69,6 +69,7 @@ Swagger.prototype = {
 
   resolve() {
     return Swagger.resolve({
+      http: this.http.bind(this),
       spec: this.spec,
       url: this.url,
       allowMetaPatches: this.allowMetaPatches,

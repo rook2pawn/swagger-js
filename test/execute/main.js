@@ -145,6 +145,7 @@ describe('execute', () => {
       expect(spy.calls.length).toEqual(1)
       expect(spy.calls[0].arguments[1]).toEqual({
         method: 'GET',
+        redirect: 'error',
         url: 'https://swagger.io/one',
         credentials: 'same-origin',
         headers: { },
