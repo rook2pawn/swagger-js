@@ -2,11 +2,56 @@ import 'cross-fetch/polyfill'
 import qs from 'qs'
 import jsYaml from 'js-yaml'
 import isString from 'lodash/isString'
+import get from 'lodash/get'
 
 // For testing
 export const self = {
   serializeRes,
   mergeInQueryOrForm
+}
+
+const makeResponseTimeoutError = function (ms) {
+//  https://github.com/visionmedia/superagent/blob/master/lib/request-base.js#L666
+  const err = new Error(`Response timeout of ${ms}ms exceeded`)
+  err.code = 'ECONNABORTED'
+  err.errno = 'ETIMEDOUT'
+  return err
+}
+const makeDeadlineTimeoutError = function (ms) {
+  const err = new Error(`Timeout of ${ms}ms exceeded`)
+  err.code = 'ECONNABORTED'
+  err.errno = 'ETIME'
+  return err
+}
+
+function responseTimeout(ms, promise) {
+  return new Promise((resolve, reject) => {
+    let timerId
+    if (ms !== undefined) {
+      timerId = setTimeout(() => {
+        reject(makeResponseTimeoutError(ms))
+      }, ms)
+    }
+    promise.then((val) => {
+      clearTimeout(timerId)
+      resolve(val)
+    }, reject)
+  })
+}
+
+function deadlineTimeout(ms, promise, originalMs) {
+  return new Promise((resolve, reject) => {
+    let timerId
+    if (ms !== undefined) {
+      timerId = setTimeout(() => {
+        reject(makeDeadlineTimeoutError(originalMs))
+      }, ms)
+    }
+    promise.then((val) => {
+      clearTimeout(timerId)
+      resolve(val)
+    }, reject)
+  })
 }
 
 // Handles fetch-like syntax and the case where there is only one object passed-in
@@ -36,14 +81,40 @@ export default function http(url, request = {}) {
     delete request.headers['Content-Type']
   }
 
+  if (this && this.agent) {
+    request.agent = this.agent
+  }
+
+  // this should be set from within
+  request.redirect = 'error' // https://github.com/bitinn/node-fetch#options
+
+  // following promise resolves on first byte, not on completion
+  // response.body is actually the underlying node stream that can be drained
+
   // eslint-disable-next-line no-undef
-  return (request.userFetch || fetch)(request.url, request).then((res) => {
-    const serialized = self.serializeRes(res, url, request).then((_res) => {
+  const reqpromise = (request.userFetch || fetch)(request.url, request)
+  const timeoutResponse = get(this, 'timeout.response', undefined)
+  const timeoutDeadline = get(this, 'timeout.deadline', undefined)
+  const timeStart = Date.now()
+  return responseTimeout(timeoutResponse, reqpromise)
+  .then((res) => {
+    const timeTtfb = Date.now()
+    const timeElapsed = (timeTtfb - timeStart)
+    let modifiedTimeoutDeadline
+    if (timeoutDeadline !== undefined) {
+      modifiedTimeoutDeadline = timeoutDeadline - timeElapsed
+    }
+
+    // serializeRes drains the request
+    const serializePromise = self.serializeRes(res, url, request)
+    .then((_res) => {
       if (request.responseInterceptor) {
         _res = request.responseInterceptor(_res) || _res
       }
       return _res
     })
+
+    const serialized = deadlineTimeout(modifiedTimeoutDeadline, serializePromise, timeoutDeadline)
 
     if (!res.ok) {
       const error = new Error(res.statusText)
