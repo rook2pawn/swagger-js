@@ -1,5 +1,6 @@
 import assign from 'lodash/assign'
 import getIn from 'lodash/get'
+import isUndefined from 'lodash/isUndefined'
 import isPlainObject from 'lodash/isPlainObject'
 import isArray from 'lodash/isArray'
 import btoa from 'btoa'
@@ -18,6 +19,12 @@ import {
   legacyIdFromPathMethod,
   isOAS3
 } from '../helpers'
+
+
+// walmart optional extensions parameters
+// the first (+ or /) indicates + replace as is
+// whereas / indicates URIEncode and / prepend
+const walmartExtensionParamsRegEx = /^([+/])(.+?)$/
 
 const arrayOrEmpty = (ar) => {
   return Array.isArray(ar) ? ar : []
@@ -181,7 +188,11 @@ export function buildRequest(options) {
 
 
   // Add values to request
-  combinedParameters.forEach((parameter) => {
+  combinedParameters
+  .filter((parameter) => {
+    return (parameter.name.match(walmartExtensionParamsRegEx) === null)
+  })
+  .forEach((parameter) => {
     const builder = parameterBuilders[parameter.in]
     let value
 
@@ -211,6 +222,8 @@ export function buildRequest(options) {
     }
 
     if (builder) {
+      // builder is different from v2 and v3
+      // v2 will encodeUriComponent
       builder({req, parameter, value, operation, spec})
     }
   })

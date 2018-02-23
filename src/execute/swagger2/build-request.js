@@ -70,9 +70,13 @@ export function applySecurities({request, securities = {}, operation = {}, spec}
 
       if (auth) {
         if (type === 'apiKey') {
-          const inType = schema.in === 'query' ? 'query' : 'headers'
+          let inType = auth.in || schema.in
+          if (inType !== 'query') {
+            inType = 'headers'
+          }
           result[inType] = result[inType] || {}
-          result[inType][schema.name] = value
+          const name = auth.name || schema.name
+          result[inType][name] = value
         }
         else if (type === 'basic') {
           if (value.header) {
